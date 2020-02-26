@@ -163,7 +163,38 @@ function Get-Tokens {
 
     $tokens.Add('tenantId', $tenantId )
     $tokens.Add('userId', $userId )
-    
+	
+    $sparkType = 'hdinsight'
+    $keyvaultPrefix = 'keyvault'
+	$dataxJobTemplate = 'DataXDirect'
+	$dataxKafkaJobTemplate = 'kafkaDataXDirect'
+	$dataxBatchJobTemplate = 'DataXBatch'
+    if ($useDatabricks -eq 'y') {
+        $sparkType = 'databricks' 
+		$keyvaultPrefix = 'secretscope'
+		$dataxJobTemplate = 'DataXDirectDatabricks'
+		$dataxKafkaJobTemplate = 'kafkaDataXDirectDatabricks'
+		$dataxBatchJobTemplate = 'DataXBatchDatabricks'
+		$tokens.Add('databricksClusterSparkVersion', $databricksClusterSparkVersion)
+		$tokens.Add('databricksClusterNodeType', $databricksClusterNodeType)
+		$tokens.Add('databricksSku', $databricksSku)
+		$tokens.Add('dbResourceGroupName', $resourceGroupName)
+    } else {
+        $tokens.Add('HDInsightVersion', $HDInsightVersion)
+        $tokens.Add('sparkComponentVersion', $sparkComponentVersion)
+        $tokens.Add('enableHDInsightAutoScaling', $enableHDInsightAutoScaling)
+        if($enableHDInsightAutoScaling -eq 'y') {
+            $tokens.Add('minNodesForHDInsightAutoScaling', $minNodesForHDInsightAutoScaling)
+            $tokens.Add('maxNodesForHDInsightAutoScaling', $maxNodesForHDInsightAutoScaling)
+        }
+    }
+
+	$tokens.Add('sparkType', $sparkType)
+	$tokens.Add('keyvaultPrefix', $keyvaultPrefix)
+	$tokens.Add('dataxJobTemplate', $dataxJobTemplate)
+	$tokens.Add('dataxKafkaJobTemplate', $dataxKafkaJobTemplate)
+	$tokens.Add('dataxBatchJobTemplate', $dataxBatchJobTemplate)
+	
     # CosmosDB
     $tokens.Add('blobopsconnectionString', $blobopsconnectionString )
     $tokens.Add('configgenClientId', $azureADApplicationConfiggenApplicationId )
@@ -196,6 +227,8 @@ function Get-Tokens {
     $tokens.Add('serviceAppId', $azureADApplicationConfiggenApplicationId )
     $tokens.Add('clientAppId', $azureADApplicationApplicationId )
 
+    $tokens.Add('azureADApplicationConfiggenResourceId', $azureADApplicationConfiggenResourceId )
+
     $aiKey = ''
     $appInsight = Get-AzureRmApplicationInsights -resourceGroupName $resourceGroupName -Name $appInsightsName -ErrorAction SilentlyContinue
     if ($appInsight) {
@@ -203,7 +236,6 @@ function Get-Tokens {
     }
 
     $tokens.Add('appInsightKey', $aiKey )
-
     $tokens.Add('resourceLocation', $resourceGroupLocation )
     
     $certtype = '' 
@@ -212,15 +244,29 @@ function Get-Tokens {
     }
     
     $tokens.Add('certtype', $certtype )
+    
+    $kafkaNativeConnectionString = ''
+    $kafkaNativeTopics = ''
+
+    if($enableKafkaSample -eq 'y') {
+        $kafkaNativeConnectionString = "datagen-kafkaNativeConnectionString"
+        $kafkaNativeTopics = "kafka1,kafka2"
+    }
+    
+    $tokens.Add('kafkaNativeConnectionString', $kafkaNativeConnectionString)
+    $tokens.Add('kafkaNativeTopics', $kafkaNativeTopics)
 
     $tokens
 }
 
 # Get appRole definition
-function Create-AppRole([string] $Name, [string] $Description) {
+function Create-AppRole([string] $Name, [string] $AppName, [string] $Description) {
     $appRole = New-Object Microsoft.Open.AzureAD.Model.AppRole
     $appRole.AllowedMemberTypes = New-Object System.Collections.Generic.List[string]
     $appRole.AllowedMemberTypes.Add("User");
+    if (($Name -eq $writerRole) -and ($AppName -eq $serviceAppName)) {
+        $appRole.AllowedMemberTypes.Add("Application");
+    }
     $appRole.DisplayName = $Name
     $appRole.Id = New-Guid
     $appRole.IsEnabled = $true
@@ -231,8 +277,8 @@ function Create-AppRole([string] $Name, [string] $Description) {
 
 # Add appRoles to AAD app
 function Set-AzureAADAppRoles([string]$AppName) {
-    $role_r = Create-AppRole -Name $readerRole -Description $readerRole + " have ability to view flows"
-    $role_w = Create-AppRole -Name $writerRole -Description $writerRole + " can manage flows"
+    $role_r = Create-AppRole -Name $readerRole -AppName $AppName -Description $readerRole + " have ability to view flows"
+    $role_w = Create-AppRole -Name $writerRole -AppName $AppName -Description $writerRole + " can manage flows"
     $roles = @($role_r, $role_W)
     
     $app = Get-AzureADApplication -Filter "DisplayName eq '$AppName'"
@@ -467,8 +513,8 @@ function Setup-SecretsForSpark {
     $secretName = "sparkclusterloginpassword"
     Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $sparkPwd
 
-    $secretName = "sshuser" 
-    Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $sshuser
+    $secretName = "sparksshuser" 
+    Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $sparksshuser
 
     $secretName = "sparksshpassword" 
     Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $sparkSshPwd
@@ -478,6 +524,9 @@ function Setup-SecretsForSpark {
 
     $secretName = $prefix + "livyconnectionstring-" + $sparkName    
     $tValue = "endpoint=https://$sparkName.azurehdinsight.net/livy;username=$sparkLogin;password=$sparkPwd"
+	if ($useDatabricks -eq 'y') {
+        $tValue = "endpoint=https://$resourceGroupLocation.azuredatabricks.net/api/2.0/;dbtoken=" 
+    }
     Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $tValue
 }
 
@@ -530,7 +579,10 @@ function Setup-Secrets {
     $secretName = $prefix + "azureservicesauthconnectionstring"    
     $tValue = "<Parameter Name=""AzureServicesAuthConnectionString"" Value=""RunAs=App;AppId=" + $azureADApplicationConfiggenApplicationId + ";TenantId=" + $tenantId + ";CertificateThumbprint=" + $certPrimary.Certificate.Thumbprint + ";CertificateStoreLocation=LocalMachine""/>"
     Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $tValue
-    
+
+    $secretName = $prefix + "cacertificatelocation"
+    Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $caCertificateLocation
+
     $prefix = "$clientSecretPrefix-"
     $secretName = $prefix + "aiKey"    
     Setup-Secret -VaultName $vaultName -SecretName $secretName -Value $aiKey
@@ -602,8 +654,7 @@ function Setup-Secrets {
 function Setup-KVAccess {
     # Get ObjectId of web app
     $servicePrincipalId = az resource show -g $resourceGroupName --name $websiteName --resource-type Microsoft.Web/sites --query identity.principalId
-    # Get ObjectId of sparkManagedIdentityName
-    $SparkManagedIdentityId = az resource show -g $resourceGroupName --name $sparkManagedIdentityName --resource-type Microsoft.ManagedIdentity/userAssignedIdentities --query properties.principalId
+    
     # Get ObjectId of vmss
     $vmssId = az resource show -g $resourceGroupName --name $vmNodeTypeName --resource-type Microsoft.Compute/virtualMachineScaleSets --query identity.principalId
     
@@ -617,14 +668,18 @@ function Setup-KVAccess {
     }
 
     az keyvault set-policy --name $servicesKVName --object-id $servicePrincipalId --secret-permissions get, list, set > $null 2>&1
-    az keyvault set-policy --name $servicesKVName --object-id $servicePrincipalConfiggenId --secret-permissions get, list, set > $null 2>&1
-    az keyvault set-policy --name $servicesKVName --object-id $SparkManagedIdentityId --secret-permissions get, list, set > $null 2>&1
+    az keyvault set-policy --name $servicesKVName --object-id $servicePrincipalConfiggenId --secret-permissions get, list, set > $null 2>&1 
     az keyvault set-policy --name $servicesKVName --object-id $vmssId --secret-permissions get, list, set > $null 2>&1
 
     az keyvault set-policy --name $sparkKVName --object-id $servicePrincipalId --secret-permissions get, list, set > $null 2>&1
     az keyvault set-policy --name $sparkKVName --object-id $servicePrincipalConfiggenId --secret-permissions get, list, set, delete > $null 2>&1
-    az keyvault set-policy --name $sparkKVName --object-id $SparkManagedIdentityId --secret-permissions get, list, set > $null 2>&1
     az keyvault set-policy --name $sparkKVName --object-id $vmssId --secret-permissions get, list, set > $null 2>&1
+	if($useDatabricks -eq 'n') {
+		# Get ObjectId of sparkManagedIdentityName  
+		$SparkManagedIdentityId = az resource show -g $resourceGroupName --name $sparkManagedIdentityName --resource-type Microsoft.ManagedIdentity/userAssignedIdentities --query properties.principalId
+		az keyvault set-policy --name $servicesKVName --object-id $SparkManagedIdentityId --secret-permissions get, list, set > $null 2>&1
+		az keyvault set-policy --name $sparkKVName --object-id $SparkManagedIdentityId --secret-permissions get, list, set > $null 2>&1
+	}
 }
 
 # Import SSL Cert To Service Fabric
@@ -662,7 +717,7 @@ function Open-Port {
 	$port = 443
 	
 	# Get the load balancer resource
-	$resource = Get-AzureRmResource | Where {$_.resourceGroupName -eq $resourceGroupName -and $_.ResourceType -eq "Microsoft.Network/loadBalancers"}
+	$resource = Get-AzureRmResource | Where {$_.resourceGroupName -eq $resourceGroupName -and $_.ResourceType -eq "Microsoft.Network/loadBalancers" -and $_.Name -like "LB-*"}
 	$slb = Get-AzureRmLoadBalancer -Name $resource.Name -resourceGroupName $resourceGroupName
     
 	$probe = Get-AzureRmLoadBalancerProbeConfig -Name $probename -LoadBalancer $slb -ErrorAction SilentlyContinue
@@ -794,12 +849,30 @@ if($resourceCreation -eq 'y') {
 }
 
 if($sparkCreation -eq 'y') {
-    Write-Host -ForegroundColor Green "Deploying resources (2/16 steps): A HDInsight cluster will be deployed"
-    Write-Host -ForegroundColor Green "Estimated time to complete: 20 mins"
+    Write-Host -ForegroundColor Green "Deploying resources (2/16 steps): A spark cluster will be deployed"   
     Setup-SecretsForSpark
 
     $tokens = Get-Tokens
-    Deploy-Resources -templateName "Spark-Template.json" -paramName "Spark-parameter.json" -templatePath $templatePath -tokens $tokens
+	if ($useDatabricks -eq 'n') {
+
+        $sparkTemplate = "Spark-Template.json"
+        $sparkParameter = "Spark-parameter.json"
+
+        $version = ($HDInsightVersion -split '\.')[0]
+        $version = [int]$version
+        if ($version -ge 4 -and $enableHDInsightAutoScaling -eq 'y') {
+            $sparkTemplate = "Spark-AutoScale-Template.json"
+            $sparkParameter = "Spark-AutoScale-parameter.json"
+        }      
+        Write-Host "sparkTemplate: '$sparkTemplate' ; sparkParameter: '$sparkParameter'"
+
+		Write-Host -ForegroundColor Green "Estimated time to complete: 20 mins"
+		Deploy-Resources -templateName  $sparkTemplate -paramName $sparkParameter -templatePath $templatePath -tokens $tokens
+	}
+	else {
+		Write-Host -ForegroundColor Green "Estimated time to complete: 5 mins"
+		Deploy-Resources -templateName "Databricks-Template.json" -paramName "Databricks-Parameter.json" -templatePath $templatePath -tokens $tokens
+	}
 }
 
 # Preparing certs...
@@ -837,13 +910,13 @@ Set-AzureAADAppCert -AppName $serviceAppName
 $azureADAppSecretValue = $azureADAppSecret.Value 
 $azureADAppSecretConfiggenValue = $azureADAppSecretConfiggen.Value
 
-Set-AzureAADAccessControl -AppId $azureADApplicationConfiggenApplicationId
-Set-AzureAADApiPermission -ServiceAppId $azureADApplicationConfiggenApplicationId -ClientAppId $azureADApplicationApplicationId
-
 Set-AzureAADAppRoles -AppName $clientAppName
 Set-AzureAADAppRoles -AppName $serviceAppName
 Add-UserAppRole -AppName $clientAppName
 Add-UserAppRole -AppName $serviceAppName
+
+Set-AzureAADAccessControl -AppId $azureADApplicationConfiggenApplicationId
+Set-AzureAADApiPermission -ServiceAppId $azureADApplicationConfiggenApplicationId -ClientAppId $azureADApplicationApplicationId -RoleName $writerRole
 
 if($serviceFabricCreation -eq 'y') {
     Write-Host -ForegroundColor Green "Deploying resources (4/16 steps): A Service fabric cluster will be deployed"
@@ -877,9 +950,11 @@ if ($setupSecrets -eq 'y') {
 
 # Spark
 if ($sparkCreation -eq 'y') {
-    Write-Host -ForegroundColor Green "Setting up ScriptActions... (6/16 steps)"
-    Write-Host -ForegroundColor Green "Estimated time to complete: 2 mins"
-    Add-ScriptActions
+    Write-Host -ForegroundColor Green "Setting up ScriptActions... (6/16 steps)"   
+	if ($useDatabricks -eq 'n') {
+		Write-Host -ForegroundColor Green "Estimated time to complete: 2 mins"
+        Add-ScriptActions 
+    }
 }
 
 # cosmosDB

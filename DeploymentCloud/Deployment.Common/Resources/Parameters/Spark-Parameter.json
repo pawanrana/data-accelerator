@@ -25,7 +25,10 @@
 			}
 		},
 		"sparkClusterVersion": {
-			"value": "3.6"
+			"value": "$HDInsightVersion"
+		},
+		"sparkComponentVersion": {
+			"value": "$sparkComponentVersion"
 		},
 		"sparkClusterWorkerNodeCount": {
 			"value": 3
@@ -38,7 +41,7 @@
 				"keyVault": {
 				"id": "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.KeyVault/vaults/$sparkRDPKVName"
 				},
-				"secretName": "sshuser"
+				"secretName": "sparksshuser"
 			}
 		},
 		"sparkSshPassword": {
@@ -52,8 +55,8 @@
 		"storageAccounts_spark_name": {
 			"value": "$sparkBlobAccountName"
 		},
-		"sparkManagedIdentity": {
-			"value": "$sparkManagedIdentityName"
+		"sparkManagedIdentity": {	
+			"value": "$sparkManagedIdentityName"	
 		},
 		"minInstanceCountSparkHeadnode": {
 			"value": $minInstanceCountSparkHeadnode
@@ -72,6 +75,12 @@
 		},
 		"userAssignedIdentitiesName": {
 			"value": "$sparkManagedIdentityName"
+		},
+		"virtualNetworkName": {
+			"value": "VNet-$serviceFabricName"
+		},
+		"subnet0Name": {
+			"value": "Subnet-0"
 		}
 	}
 }

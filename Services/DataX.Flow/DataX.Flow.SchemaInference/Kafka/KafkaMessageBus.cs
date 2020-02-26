@@ -19,7 +19,7 @@ using System.Timers;
 
 namespace DataX.Flow.SchemaInference.Kafka
 {
-    public class KafkaMessageBus : IMessageBus
+    public class KafkaMessageBus : IMessageBus, IDisposable
     {
         private readonly string _brokerList = string.Empty;
         private readonly string _connectionString = null;
@@ -48,6 +48,20 @@ namespace DataX.Flow.SchemaInference.Kafka
             _inputType = inputType;
             _logger = logger;
 
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _timer.Dispose();
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
         }
 
         private void StartTimer(int seconds)
@@ -107,9 +121,8 @@ namespace DataX.Flow.SchemaInference.Kafka
                             {
                                 _logger.LogInformation($"Closing consumer");
                                 consumer.Close();
-                                return eventsData;
+                                return await Task.FromResult(eventsData).ConfigureAwait(false);
                             }
-
 
                             if (consumeResult.IsPartitionEOF)
                             {
@@ -125,7 +138,7 @@ namespace DataX.Flow.SchemaInference.Kafka
                             {
                                 Raw = consumeResult.Value,
                                 Properties = new Dictionary<string, string>() { { "HeadersCount", consumeResult.Headers.Count.ToString() } },
-                        };
+                            };
 
                             // Set properties (using the Headers)
                             if (consumeResult.Headers != null && consumeResult.Headers.Count > 0)
@@ -172,7 +185,7 @@ namespace DataX.Flow.SchemaInference.Kafka
                 {
                     _logger.LogInformation($"Closing consumer");
                     consumer.Close();
-                    return eventsData;
+                    return await Task.FromResult(eventsData).ConfigureAwait(false);
                 }
             }
         }
